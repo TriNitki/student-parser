@@ -1,23 +1,58 @@
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import NoSuchElementException
 from selenium import webdriver
+from threading import Barrier
 import time
+import csv
 
-from typing import Dict
+from typing import Dict, List
 
 from config import config
 
 def __timer(func):
-    def wrapper_func(driver, student):
+    def wrapper_func(barrier, service, options, STUDENT_INFO):
         before = time.time()
-        func(driver, student)
+        func(barrier, service, options, STUDENT_INFO)
         after = time.time()
         print(f"time: {after - before }")
     return wrapper_func
 
 @__timer
-def parse_skips(driver: webdriver.Chrome, student: Dict[str, str]):
+def parse_grade(barrier: Barrier, service: Service, options: Options, student: Dict[str, str]):
+    driver = webdriver.Chrome(
+        service=service,
+        options=options
+    )
+
+    driver.get(
+        rf'https://ocenka.tusur.ru/student_search?utf8=%E2%9C%93&surname={student["surname"]}&name={student["name"]}&group={student["group"]}&commit=%D0%9D%D0%B0%D0%B9%D1%82%D0%B8'
+    )
+    
+    avg_grade = None
+    not_found = None
+    
+    while not avg_grade and not not_found:
+        try:
+            avg_grade = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div/div/span/div/ui-view/div/div[2]/div[3]/h4/span').text
+        except NoSuchElementException:
+            try:
+                not_found = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div/div[2]/p[1]').text
+            except NoSuchElementException:
+                continue
+    
+    student_str = f'{student["surname"]} {student["name"]} {student["group"]}'
+
+    if not_found:
+        print(f"{student_str}: NOT FOUND!")
+        return
+
+    print(f"{student_str}: avg_grade = {avg_grade}")
+    
+    # Get attendance
+    
     driver.get(r'https://attendance.tusur.ru/')
 
     student_str = f'{student["surname"]} {student["name"]} {student["group"]}'
@@ -58,30 +93,18 @@ def parse_skips(driver: webdriver.Chrome, student: Dict[str, str]):
     skips_frac = [height/difference for height in rects_heights]
     mean_skips_frac = sum(skips_frac) / len(skips_frac)
     
-    return {"mean_fraction": mean_skips_frac, "skips_amount": skips_amount}
+    try:
+        with open("prikol.csv", 'a', encoding='utf8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=["name", "mean_fraction", "skips_amount", "avg_grade"])
+            writer.writerow({"name": student_str, "mean_fraction": mean_skips_frac, "skips_amount": skips_amount, "avg_grade": avg_grade})
+    except IOError:
+        print("I/O error")
 
-@__timer
-def parse_grade(driver: webdriver.Chrome, student: Dict[str, str]):
-    driver.get(r'https://ocenka.tusur.ru/')
+def remove_parsed_students(students: List[Dict[str, str]]):
+    unparsed = []
+    for student in students:
+        if student["is_parsed"]:
+            continue
+        unparsed.append(student)
     
-    surname_input = driver.find_element(By.XPATH, r'//*[@id="surname"]')
-    surname_input.send_keys(student["surname"])
-    
-    name_input = driver.find_element(By.XPATH, r'//*[@id="name"]')
-    name_input.send_keys(student["name"])
-    
-    group_input = driver.find_element(By.XPATH, r'//*[@id="group"]')
-    group_input.send_keys(student["group"])
-    
-    submit_input = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div/div[1]/form/div[4]/input')
-    submit_input.click()
-    
-    avg_grade = 0
-    
-    while not avg_grade:
-        try:
-            avg_grade = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div/div/span/div/ui-view/div/div[2]/div[3]/h4/span').text
-        except NoSuchElementException:
-            pass
-    
-    return avg_grade
+    return unparsed
