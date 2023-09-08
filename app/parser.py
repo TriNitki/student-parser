@@ -1,21 +1,12 @@
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-import time
 import csv
 from typing import Dict, List
 from threading import Thread
-
-# class EmptyStundentsError(Exception):
-#     def __init__(self, message, errors):            
-#         # Call the base class constructor with the parameters it needs
-#         super().__init__(message)
-            
-#         # Now for your custom code...
-#         self.errors = errors
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+import json
 
 class StudentParser:
     def __init__(
@@ -51,7 +42,6 @@ class StudentParser:
                 t.join()
     
     def _get_students(self):
-        import json 
         with open(self.students_path, "r", encoding='utf8') as f:
             students = json.load(f)
             
@@ -86,24 +76,19 @@ class StudentParser:
             options=self.driver_options
         )
 
+        
+        # Get grade
+        
         driver.get(
             rf'https://ocenka.tusur.ru/student_search?utf8=%E2%9C%93&surname={student["surname"]}&name={student["name"]}&group={student["group"]}&commit=%D0%9D%D0%B0%D0%B9%D1%82%D0%B8'
         )
         
-        avg_grade = None
-        not_found = None
-        
-        while not avg_grade and not not_found:
-            try:
-                avg_grade = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div/div/span/div/ui-view/div/div[2]/div[3]/h4/span').text
-            except NoSuchElementException:
-                try:
-                    not_found = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div/div[2]/p[1]').text
-                    driver.close()
-                    return
-                except NoSuchElementException:
-                    continue
-        
+        try:
+            avg_grade = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div/div/span/div/ui-view/div/div[2]/div[3]/h4/span').text
+        except NoSuchElementException:
+            driver.close()
+            return
+
         # Get attendance
         
         driver.get(fr'https://attendance.tusur.ru/search?utf8=%E2%9C%93&q={student["surname"]}+{student["name"]}+{student["group"]}&commit=%D0%9D%D0%B0%D0%B9%D1%82%D0%B8')
@@ -111,25 +96,22 @@ class StudentParser:
         
         student_str = f'{student["surname"]} {student["name"]} {student["group"]}'
         
-        skips_a = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div[4]/table/tbody')
-        skips_amount = len(skips_a.text.splitlines())
+        raw_skips = driver.find_element(By.XPATH, r'/html/body/div[1]/div[4]/div[4]/table/tbody')
+        skips_amount = len(raw_skips.text.splitlines())
         
-        lines = driver.find_elements(By.XPATH, r'//*[@id="highcharts-4"]//*[name()="svg"]/*[name()="g"][2]/*[name()="path"]')
+        raw_lines = driver.find_elements(By.XPATH, r'//*[@id="highcharts-4"]//*[name()="svg"]/*[name()="g"][2]/*[name()="path"]')
+        lines_values = [float(item.get_attribute("d").split(" ")[1]) for item in raw_lines]
+        difference = max(lines_values) - min(lines_values)
         
-        lines_values = [float(item.get_attribute("d").split(" ")[1]) for item in lines]
-        max_value = max(lines_values)
-        min_value = min(lines_values)
-        difference = max_value - min_value
-        
-        rects = driver.find_elements(By.XPATH, r'//*[@id="highcharts-4"]//*[name()="svg"]/*[name()="g"][5]/*[name()="g"][1]/*[name()="rect"]')
-        
-        rects_heights = [float(item.get_attribute("height")) for item in rects]
+        raw_rests = driver.find_elements(By.XPATH, r'//*[@id="highcharts-4"]//*[name()="svg"]/*[name()="g"][5]/*[name()="g"][1]/*[name()="rect"]')
+        rects_heights = [float(item.get_attribute("height")) for item in raw_rests]
         
         driver.close()
         
-        skips_frac = [height/difference for height in rects_heights]
-        mean_skips_frac = sum(skips_frac) / len(skips_frac)
-        self._save_student_csv(student_str, mean_skips_frac, skips_amount, avg_grade)
+        skips_fraction = [height/difference for height in rects_heights]
+        mean_skips_avg = sum(skips_fraction) / len(skips_fraction)
+        
+        self._save_student_csv(student_str, mean_skips_avg, skips_amount, avg_grade)
         
         
         
